@@ -222,6 +222,7 @@ def main():
         module.fail_json(msg=to_text(e))
 
     facts_dict = fact_collector.collect(module=module)
+    #print("bar2", file=sys.stderr)
 
     module.exit_json(ansible_facts=facts_dict)
 

@@ -90,6 +90,7 @@ class LinuxHardware(Hardware):
         self.module.run_command_environ_update = {'LANG': locale, 'LC_ALL': locale, 'LC_NUMERIC': locale}
 
         cpu_facts = self.get_cpu_facts(collected_facts=collected_facts)
+        cpu_facts_sysfs = self.get_cpu_facts_sysfs()
         memory_facts = self.get_memory_facts()
         dmi_facts = self.get_dmi_facts()
         device_facts = self.get_device_facts()
@@ -103,6 +104,7 @@ class LinuxHardware(Hardware):
             self.module.warn("No mount facts were gathered due to timeout.")
 
         hardware_facts.update(cpu_facts)
+        #hardware_facts.update(cpu_facts_sysfs)
         hardware_facts.update(memory_facts)
         hardware_facts.update(dmi_facts)
         hardware_facts.update(device_facts)
@@ -157,6 +159,66 @@ class LinuxHardware(Hardware):
         }
 
         return memory_facts
+
+    def _sysfs_cpu_list_children(self, relative_path):
+        """Lists all children (both files and directories) below the given path.
+
+        Low-level access function that can be mocked for tests."""
+        path = os.path.join("/sys/devices/system/cpu", relative_path)
+        return [direntry.name for direntry in os.scandir(path)]
+
+    def _sysfs_cpu_read_file(self, relative_path):
+        """Read the content of a file in sysfs, returns a string.
+
+        Low-level access function that can be mocked for tests"""
+        path = os.path.join("/sys/devices/system/cpu", relative_path)
+        data = None
+        with open(path, "r") as fd:
+            data = fd.read()
+        return data
+
+    def sysfs_cpu_list(self):
+        """Returns a list of int representing IDs of processors seen by the OS"""
+        children = self._sysfs_cpu_list_children("")
+        cpu_list = []
+        for item in children:
+            if not item.startswith("cpu"):
+                continue
+            try:
+                id = int(item[3:])
+                cpu_list.append(id)
+            except ValueError:
+                pass
+        return cpu_list
+
+    def sysfs_read_as_int(self, relative_path):
+        """Raises ValueError if content could not be parsed as int"""
+        raw_data = self._sysfs_cpu_read_file(relative_path)
+        return int(raw_data)
+
+    def sysfs_read_as_cpumask(self, relative_path):
+        """Returns a list of IDs from an hexadecimal bitmask.  Guaranteed to be sorted."""
+        id_list = []
+        raw_data = self._sysfs_cpu_read_file(relative_path)
+        mask = int(raw_data, base=16)
+        pos = 0
+        while mask != 0:
+            if mask & 1:
+                id_list.append(pos)
+            mask >>= 1
+            pos += 1
+        return id_list
+
+    def get_cpu_facts_sysfs(self):
+        # TODO: look at old_filenames in hwloc
+        cpu_facts = {}
+        cpu_list = self.sysfs_cpu_list()
+        # TODO: check if topology file exists
+        for cpu_id in cpu_list:
+            coreset = self.sysfs_read_as_cpumask("cpu{}/topology/core_cpus".format(cpu_id))
+            # TODO: handle AMD CU (threadwithcoreid == -1 in hwloc)
+            self.module.warn("{}: {}".format(cpu_id, coreset))
+            
 
     def get_cpu_facts(self, collected_facts=None):
         cpu_facts = {}
